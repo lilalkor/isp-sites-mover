@@ -14,6 +14,9 @@ TXT_GRN='\e[0;32m'
 TXT_RED='\e[0;31m'
 TXT_YLW='\e[0;33m'
 TXT_RST='\e[0m'
+
+TMP_PATH='/root/site_mover'
+DOMAIN_PARAMS=''
 ISP_VERSION=''
 
 # Parsing arguments recieved
@@ -23,7 +26,8 @@ check_args()
     #    echo -e "$usage_text"
     #    exit 0
     #fi
-    while getopts "hlrRp:v:o:c:" opt; do
+    local opt
+    while getopts "hc:" opt; do
         case $opt in
             h )
                 echo -e "$usage_text"
@@ -36,7 +40,7 @@ check_args()
             : )
                 echo "Option -$OPTARG requires an argument." >&2
                 exit 1
-          ;;
+            ;;
       esac
     done
 }
@@ -54,7 +58,7 @@ finish()
             echo -e "RESULT: ${TXT_RED}FAIL${TXT_RST}"; exit 1
         ;;
         * )
-            echo -e "RESULT: ${TXT_YLW}$result${TXT_RST}"; exit 2
+            echo -e "RESULT: ${TXT_YLW}${result}${TXT_RST}"; exit 2
         ;;
     esac
 }
@@ -173,8 +177,6 @@ detect_isp_version()
         if [ -x ${file} ]; then
             ISP_VERSION=$version
             local full_version=`$file -V`
-            echo "ISPmanager $version detected."
-            echo "Full version: $full_version"
             ((counter++))
         fi
     done
@@ -184,7 +186,8 @@ detect_isp_version()
             finish NOTOK
         ;;
         1 )
-            finish OK
+            echo "ISPmanager $version detected."
+            echo "Full version: $full_version"
         ;;
         * )
             echo "Can't detect ISPmanager version"
@@ -194,6 +197,127 @@ detect_isp_version()
 }
 
 
+# Setting commands for different OS
+set_commands()
+{
+    case $ISP_VERSION in
+        4 )
+
+        ;;
+        5 )
+            create_user_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr user.add.finish addinfo=on confirm=* ftp_inaccess= ftp_user=on ftp_user_name=$username limit_charset=off limit_db_enabled=on limit_dirindex="index.php index.html" limit_ftp_users= limit_ftp_users_inaccess= limit_php_mode=php_mode_mod limit_php_mode_cgi=on limit_php_mode_mod=on name=$username passwd=$password php_enable=on sok=ok'
+            create_site_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr webdomain.edit $domain_params'
+            gen_siteparams_command='isp5_gen_siteparams $domain $username'
+            remove_site_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr webdomain.delete elid=$domain'
+            get_domain_dir="sqlite3 /usr/local/mgr5/etc/ispmgr.db \"SELECT docroot FROM webdomain WHERE name='\$domain';\""
+
+        ;;
+        * )
+            echo "I don't know how to work with ISPmanager version: $ISP_VERSION"    
+            finish NOTOK
+        ;;
+    esac
+}
+
+
+# Move site with ISPmanager
+move_site()
+{
+    local domain=$1
+    local username=$2
+
+    #eval $gen_siteparams_command
+    isp5_gen_siteparams $domain $username
+    echo "Creating user $username..."
+    create_user $username
+    echo "Backing up docroot for $domain"
+    backup_domain_dir $domain
+    echo "Removing old $domain"
+    remove_site $domain
+    echo "Creating new $domain"
+    create_site $domain $DOMAIN_PARAMS
+    echo "Restoring docroot for $domain"
+    restore_domain_dir $domain
+}
+
+# Generate site parameters
+isp5_gen_siteparams()
+{
+    local domain=$1
+    local username=$2
+
+    local domain_params="owner=$username sok=ok"
+    local webdomain_columns=(`sqlite3 /usr/local/mgr5/etc/ispmgr.db 'PRAGMA table_info(webdomain);' | awk -F\| '{print $2}' | grep -vE 'id|users|docroot'`)
+    for column in ${webdomain_columns[@]}; do
+        local value=`sqlite3 /usr/local/mgr5/etc/ispmgr.db "SELECT $column FROM webdomain WHERE name='$domain';"`
+        local domain_params="$domain_params $column=$value"
+    done
+    DOMAIN_PARAMS=$domain_params
+}
+
+# Create user with ISPmanager
+create_user()
+{
+    local username=$1
+    local password=`pwgen -scan 16 1`
+
+    local result=`eval $create_user_command`
+    #if [[ $result =~ ERROR ]]; then
+    #    echo $result
+    #    finish NOTOK
+    #fi
+}
+
+# Create www-domain with ISPmanager
+create_site()
+{
+    local domain=$1
+    local domain_params=$DOMAIN_PARAMS
+
+    local result=`eval $create_site_command`
+    if [[ $result =~ ERROR ]]; then
+        echo $result
+        finish NOTOK
+    fi
+}
+
+# Remove www-domain with ISPmanager
+remove_site()
+{
+    local domain=$1
+
+    local result=`eval $remove_site_command`
+    if [[ $result =~ ERROR ]]; then
+        echo $result
+        finish NOTOK
+    fi
+}
+
+# Move sitedir to tmp
+backup_domain_dir()
+{
+    local domain=$1 
+    local tmp_path=$TMP_PATH
+    local backup_path=${tmp_path}/${domain}
+
+    local domain_dir=`eval $get_domain_dir`
+    mkdir -p $tmp_path
+    mv $domain_dir $backup_path
+    mkdir $domain_dir
+}
+
+# Restore sitedir from tmp
+restore_domain_dir()
+{
+    local domain=$1
+    local tmp_path=$TMP_PATH
+    local backup_path=${tmp_path}/${domain}
+
+    local domain_dir=`eval $get_domain_dir`
+    /bin/rm -rf $domain_dir
+    mv $backup_path $domain_dir
+}
+
 
 
 
@@ -202,3 +326,6 @@ check_bash_version
 detect_package_manager
 detect_os
 detect_isp_version
+set_commands
+
+move_site drupal.lilal.tk fasttest
