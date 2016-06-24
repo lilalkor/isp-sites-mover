@@ -54,7 +54,7 @@ finish()
             echo -e "RESULT: ${TXT_RED}FAIL${TXT_RST}"; exit 1
         ;;
         * )
-            echo -e "RESULT: ${TXT_YLW}UNKNOWN${TXT_RST}"; exit 2
+            echo -e "RESULT: ${TXT_YLW}$result${TXT_RST}"; exit 2
         ;;
     esac
 }
@@ -166,6 +166,7 @@ detect_isp_version()
     version_to_file_hash['4']='/usr/local/ispmgr/bin/ispmgr'
     version_to_file_hash['5']='/usr/local/mgr5/bin/core'
     local version=''
+    local counter=0
 
     for version in  ${!version_to_file_hash[@]}; do
         local file=${version_to_file_hash[$version]}
@@ -174,9 +175,22 @@ detect_isp_version()
             local full_version=`$file -V`
             echo "ISPmanager $version detected."
             echo "Full version: $full_version"
+            ((counter++))
         fi
     done
-
+    case $counter in
+        0 )
+            echo "Can't find ISPmanager on server"
+            finish NOTOK
+        ;;
+        1 )
+            finish OK
+        ;;
+        * )
+            echo "Can't detect ISPmanager version"
+            finish NOTOK
+        ;;
+    esac
 }
 
 
