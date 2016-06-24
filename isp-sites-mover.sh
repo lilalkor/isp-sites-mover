@@ -1,4 +1,5 @@
 #!/bin/bash
+set -u
 
 # Usage text
 usage_text=$(cat << EOF
@@ -8,38 +9,22 @@ Script to move sites between ISPmanager users.
 EOF
 )
 
+
+TXT_GRN='\e[0;32m'
+TXT_RED='\e[0;31m'
+TXT_YLW='\e[0;33m'
+TXT_RST='\e[0m'
+ISP_VERSION=''
+
 # Parsing arguments recieved
 check_args()
 {
-    if [ $# -eq 0 ]; then
-        echo -e "$usage_text"
-        exit 0
-    fi
+    #if [ $# -eq 0 ]; then
+    #    echo -e "$usage_text"
+    #    exit 0
+    #fi
     while getopts "hlrRp:v:o:c:" opt; do
         case $opt in
-            p )
-                PACKAGE=$OPTARG
-            ;;
-            v )
-                FORCE_VERSION='1'
-                FORCED_VERSION=$OPTARG
-            ;;
-            r )
-                RESTART_NEEDED='1'
-            ;;
-            R )
-                ONLY_RESTART='1'
-            ;;
-            l )
-                LOGGING='1'
-            ;;
-            o )
-                FORCE_OS='1'
-                FORCED_OS=$OPTARG
-            ;;
-            c )
-                CTID=$OPTARG  
-            ;;
             h )
                 echo -e "$usage_text"
                 exit 0
@@ -109,10 +94,6 @@ detect_package_manager()
 # OS to package manager hash
 verify_package_manager()
 {
-    # Do not check package manager, if we need only restart services, mainly because of bash 4.0
-    if [ $ONLY_RESTART -eq 1 ]; then
-        return
-    fi
     local os=$1
     local -A os_to_pm_hash
     os_to_pm_hash["Debian"]="dpkg"
@@ -135,16 +116,6 @@ verify_package_manager()
 # Detect OS
 detect_os()
 {
-    # Echo CTID if set
-    if [ $CTID ]; then
-        echo -e "CTID:\t$CTID"
-    fi
-    # Use forced OS if any
-    if [ $FORCE_OS -eq 1 ]; then
-        OS=$FORCED_OS
-        echo -e "Forced OS:\t$OS"
-        return
-    fi
     local issue_file='/etc/issue'
     local os_release_file='/etc/os-release'
     local redhat_release_file='/etc/redhat-release'
@@ -188,6 +159,26 @@ check_bash_version()
 }
 
 
+# Detect ISPmanager version
+detect_isp_version()
+{
+    local -A version_to_file_hash
+    version_to_file_hash['4']='/usr/local/ispmgr/bin/ispmgr'
+    version_to_file_hash['5']='/usr/local/mgr5/bin/core'
+    local version=''
+
+    for version in  ${!version_to_file_hash[@]}; do
+        local file=${version_to_file_hash[$version]}
+        if [ -x ${file} ]; then
+            ISP_VERSION=$version
+            local full_version=`$file -V`
+            echo "ISPmanager $version detected."
+            echo "Full version: $full_version"
+        fi
+    done
+
+}
+
 
 
 
@@ -196,3 +187,4 @@ check_args
 check_bash_version
 detect_package_manager
 detect_os
+detect_isp_version
