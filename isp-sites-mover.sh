@@ -1,5 +1,5 @@
 #!/bin/bash
-set -ueo pipefail
+set -u
 
 # Usage text
 usage_text=$(cat << EOF
