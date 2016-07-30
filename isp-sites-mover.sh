@@ -52,7 +52,7 @@ USERNAME=''
 OLD_USERNAME=''
 DOMAIN=''
 EXCLUDE=''
-declare -A ERRORS
+declare -A ERRORS=()
 
 # Echo with time
 echo_time()
@@ -143,8 +143,8 @@ detect_package_manager()
 {
     local dpkg=""
     local rpm=""
-    local dpkg=`which dpkg >/dev/null 2>&1; echo $?`
-    local rpm=`which rpm >/dev/null 2>&1; echo $?`
+    local dpkg=`type dpkg >/dev/null 2>&1; echo $?`
+    local rpm=`type rpm >/dev/null 2>&1; echo $?`
     local result=`echo "$dpkg$rpm"`
     case $result in
         01 )
