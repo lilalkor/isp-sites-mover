@@ -33,8 +33,10 @@ ISP_VERSION=''
 ISPMGR_CONF=''
 MASS_MOVING='0'
 USERNAME=''
+OLD_USERNAME=''
 DOMAIN=''
 EXCLUDE=''
+declare -A ERRORS
 
 # Echo with time
 echo_time()
@@ -243,20 +245,51 @@ set_commands()
 {
     case $ISP_VERSION in
         4 )
+            ISPMGR_CONF='/usr/local/ispmgr/etc/ispmgr.conf'
+            kill_ispmgr_command='killall -9 ispmgr'
+
+            create_user_command='/usr/local/ispmgr/sbin/mgrctl -m ispmgr user.edit $user_params'
+            gen_userparams_command='isp4_gen_userparams $old_username $username'
+            get_old_user_command="/usr/local/ispmgr/sbin/mgrctl -m ispmgr wwwdomain.edit elid=\$domain | grep '^owner' | awk -F= '{print \$2}'"
+
+            create_site_command='/usr/local/ispmgr/sbin/mgrctl -m ispmgr wwwdomain.edit $domain_params'
+            gen_siteparams_command='isp4_gen_siteparams $domain $username'
+            remove_site_command='/usr/local/ispmgr/sbin/mgrctl -m ispmgr wwwdomain.delete elid=$domain'
+            get_domain_dir_command="/usr/local/ispmgr/sbin/mgrctl -m ispmgr wwwdomain.edit elid=\$domain | grep '^docroot' | awk -F= '{print \$2}'"
+
+            check_user_command='/usr/local/ispmgr/sbin/mgrctl -m ispmgr user | grep -q "^name=$username"; echo $?'
+            check_domain_command='/usr/local/ispmgr/sbin/mgrctl -m ispmgr wwwdomain | grep -q "^name=$domain"; echo $?'
+            check_domain_owner_command='/usr/local/ispmgr/sbin/mgrctl -m ispmgr wwwdomain | grep -q "^name=$domain .*owner=$username"; echo $?'
+
+            get_id_by_username_command='true'
+            change_dnsdomain_owner_command='/usr/local/ispmgr/sbin/mgrctl -m ispmgr domain.edit `/usr/local/ispmgr/sbin/mgrctl -m ispmgr domain.edit elid=$domain | grep -vE "^elid|^owner"` elid=$domain owner=$username sok=ok'
+            change_emaildomain_owner_command='true'
+
+            get_all_users_command='/usr/local/ispmgr/sbin/mgrctl -m ispmgr user | sed -re "s/^name=([^ ]+) .*$/\1/"'
+            get_all_sites_by_user_command='/usr/local/ispmgr/sbin/mgrctl -m ispmgr wwwdomain | grep "owner=$username" | sed -re "s/^name=([^ ]+) .*$/\1/"'
+
 
         ;;
         5 )
             ISPMGR_CONF='/usr/local/mgr5/etc/ispmgr.conf'
             kill_ispmgr_command='killall -9 core'
 
-            create_user_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr user.add.finish addinfo=on confirm=* ftp_inaccess= ftp_user=on ftp_user_name=$username limit_charset=off limit_db_enabled=on limit_dirindex="index.php index.html" limit_ftp_users= limit_ftp_users_inaccess= limit_php_mode=php_mode_mod limit_php_mode_cgi=on limit_php_mode_mod=on name=$username passwd=$password php_enable=on sok=ok'
+            create_user_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr user.add.finish $user_params'
+            gen_userparams_command='isp5_gen_userparams $old_username $username'
+            get_old_user_command=" /usr/local/mgr5/sbin/mgrctl -m ispmgr webdomain.edit elid elid=\$domain | grep '^owner' | awk -F= '{print \$2}'"
+
             create_site_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr webdomain.edit $domain_params'
             gen_siteparams_command='isp5_gen_siteparams $domain $username'
             remove_site_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr webdomain.delete elid=$domain'
-            get_domain_dir="sqlite3 /usr/local/mgr5/etc/ispmgr.db \"SELECT docroot FROM webdomain WHERE name='\$domain';\""
+            get_domain_dir_command="sqlite3 /usr/local/mgr5/etc/ispmgr.db \"SELECT docroot FROM webdomain WHERE name='\$domain';\""
+
             check_user_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr user | grep -q "^name=$username"; echo $?'
             check_domain_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr webdomain | grep -q "^name=$domain"; echo $?'
             check_domain_owner_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr webdomain | grep -q "^name=$domain owner=$username"; echo $?'
+
+            get_id_by_username_command="/usr/local/mgr5/sbin/mgrctl -m ispmgr user.edit elid=\$username | grep '^id' | awk -F= '{print \$2}'"
+            change_dnsdomain_owner_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr domain.edit elid=$domain users=$userid sok=ok'
+            change_emaildomain_owner_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr emaildomain.edit elid=$domain users=$userid sok=ok'
 
             get_all_users_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr user | sed -re "s/^name=([^ ]+) .*$/\1/"'
             get_all_sites_by_user_command='/usr/local/mgr5/sbin/mgrctl -m ispmgr webdomain | grep "owner=$username" | sed -re "s/^name=([^ ]+) .*$/\1/"'
@@ -275,54 +308,79 @@ move_site()
 {
     local domain=$1
     local username=$2
+    local old_username=''
     local result=''
 
     local check_result=$(check_input $domain $username)
     case $check_result in
         # Domain exists, used does not, full action set
         100 )
+            echo_tab "Getting old user"
+            old_username=`eval $get_old_user_command`
+
+            echo_tab "Getting user parameters"
+            eval $gen_userparams_command            
+
             echo_tab "Getting current site parameters"
             eval $gen_siteparams_command
 
             echo_tab "Creating user $username"
-            create_user $username
+            create_user $username || return 1
 
             echo_tab "Backing up docroot for $domain"
-            backup_domain_dir $domain
+            backup_domain_dir $domain || return 1
 
             echo_tab "Removing old $domain from panel"
-            remove_site $domain
+            remove_site $domain || return 1
+
+            echo_tab "Changing owner for DNS-domain $domain"
+            change_ns_owner $domain $username || return 1
+
+            echo_tab "Changing owner for email-domain $domain"
+            change_email_owner $domain $username || return 1
 
             echo_tab "Creating new $domain in panel"
-            create_site $domain
+            create_site $domain || return 1
 
             echo_tab "Restoring docroot for $domain"
-            restore_domain_dir $domain
+            restore_domain_dir $domain || return 1
 
             echo_tab "Setting permissions for $domain"
-            set_permissions $domain $username
+            set_permissions $domain $username || return 1
         ;;
         # User and domain exist. no need to create user
         110 )
+            echo_tab "Getting old user"
+            old_username=`eval $get_old_user_command`
+
+            echo_tab "Getting user parameters"
+            eval $gen_userparams_command            
+
             echo_tab "Getting current site parameters"
             eval $gen_siteparams_command
 
             echo_tab "User $username exists."
 
             echo_tab "Backing up docroot for $domain"
-            backup_domain_dir $domain
+            backup_domain_dir $domain || return 1
 
             echo_tab "Removing old $domain from panel"
-            remove_site $domain 
+            remove_site $domain || return 1
+
+            echo_tab "Changing owner for DNS-domain $domain"
+            change_ns_owner $domain $username || return 1
+
+            echo_tab "Changing owner for email-domain $domain"
+            change_email_owner $domain $username || return 1
 
             echo_tab "Creating new $domain in panel"
-            create_site $domain
+            create_site $domain || return 1
 
             echo_tab "Restoring docroot for $domain"
-            restore_domain_dir $domain
+            restore_domain_dir $domain || return 1
 
             echo_tab "Setting permissions for $domain"
-            set_permissions $domain $username
+            set_permissions $domain $username || return 1
         ;;
         # Everything is already done
         111 )
@@ -363,25 +421,68 @@ check_input()
 }
 
 # Generate site parameters
+isp4_gen_siteparams()
+{
+    local domain=$1
+    local username=$2
+
+    local domain_params="owner=$username sok=ok"
+    local values=`/usr/local/ispmgr/sbin/mgrctl -m ispmgr wwwdomain.edit elid=$domain | grep -vE '^docroot|^elid|^owner' | sed -re "s/([^=]+=)(.*)$/\1\\\'\2\\\'/" | xargs`
+
+    domain_params="$domain_params $values"
+
+    DOMAIN_PARAMS=$domain_params
+}
+
 isp5_gen_siteparams()
 {
     local domain=$1
     local username=$2
 
     local domain_params="owner=$username sok=ok"
-    local webdomain_columns=(`sqlite3 /usr/local/mgr5/etc/ispmgr.db 'PRAGMA table_info(webdomain);' | awk -F\| '{print $2}' | grep -vE 'id|users|docroot'`)
-    for column in ${webdomain_columns[@]}; do
-        local value=`sqlite3 /usr/local/mgr5/etc/ispmgr.db "SELECT $column FROM webdomain WHERE name='$domain';"`
-        local domain_params="$domain_params $column=$value"
-    done
+    local values=`/usr/local/mgr5/sbin/mgrctl -m ispmgr webdomain.edit elid=$domain | grep -vE '^owner|^id|^elid' | xargs | sed -re "s/ ipaddrs=/,/2g"`
+
+    domain_params="$domain_params $values"
+
     DOMAIN_PARAMS=$domain_params
 }
+
+# Generate user parameters
+isp4_gen_userparams()
+{
+    local old_username=$1
+    local username=$2
+    local password=`pwgen -scan 16 1`
+    local user_params="name=$username passwd=$password sok=ok"
+
+    local values=`/usr/local/ispmgr/sbin/mgrctl -m ispmgr user.edit elid=$old_username | grep -vE '^elid|^name' | sed -re "s/([^=]+=)(.*)$/\1\\\'\2\\\'/" | xargs`
+    
+    user_params="$user_params $values"
+    
+    USER_PARAMS=$user_params
+}
+
+isp5_gen_userparams()
+{
+    local old_username=$1
+    local username=$2
+    local password=`pwgen -scan 16 1`
+    local user_params="name=$username ftp_user_name=$username passwd=$password sok=ok"
+
+    local values=`/usr/local/mgr5/sbin/mgrctl -m ispmgr user.edit elid=$old_username | grep -vE '^name|^.?id=|^create_time|^home|^ftp_user_name|^elid|^limit_webdomains|^limit_emaildomains' | sed -re "s/([^=]+=)(.*)$/\1\\\'\2\\\'/" | xargs`
+    
+    user_params="$user_params $values"
+    
+    USER_PARAMS=$user_params
+}
+
+
 
 # Create user with ISPmanager
 create_user()
 {
     local username=$1
-    local password=`pwgen -scan 16 1`
+    local user_params=$USER_PARAMS
     local func_name=${FUNCNAME[0]}
 
     local answer=`eval $create_user_command`
@@ -421,13 +522,20 @@ create_site()
         1 )
             echo "Error in $func_name"
             echo "$answer"
+            register_errors $domain $answer
             return 1
         ;;
         2 )
             echo "Adding 'Option InsecureDomain' to $ISPMGR_CONF"
             echo 'Option InsecureDomain' >> $ISPMGR_CONF
             eval $kill_ispmgr_command
-            answer=`eval $create_site_command`
+            create_site $domain
+        ;;
+        3 )
+            local passwd_file=`echo $answer | awk -F\' '{print $2}'`
+            echo "Removing file '$passwd_file'"
+            rm $passwd_file
+            create_site $domain
         ;;
         * )
             echo "Undefined result in $func_name "
@@ -446,8 +554,12 @@ check_result()
 
     case $func in
         create_site )
-            if [[ $answer =~ 'ERROR dns(domain_access)' ]]; then
+            local dns_owner_regex='ERROR.*domain_access|ERROR.*belongs to another user'
+            local htaccess_regex='ERROR.*parsing a new record in.*\.passwd'
+            if [[ $answer =~ $dns_owner_regex ]]; then
                 return 2
+            elif [[ $answer =~ $htaccess_regex ]]; then
+                return 3
             elif [[ $answer =~ 'ERROR' ]]; then
                 return 1
             else
@@ -497,7 +609,7 @@ backup_domain_dir()
     local tmp_path=$TMP_PATH
     local backup_path=${tmp_path}/${domain}
 
-    local domain_dir=`eval $get_domain_dir`
+    local domain_dir=`eval $get_domain_dir_command`
     mkdir -p $tmp_path
     mv $domain_dir $backup_path
     mkdir $domain_dir
@@ -510,7 +622,7 @@ restore_domain_dir()
     local tmp_path=$TMP_PATH
     local backup_path=${tmp_path}/${domain}
 
-    local domain_dir=`eval $get_domain_dir`
+    local domain_dir=`eval $get_domain_dir_command`
     /bin/rm -rf $domain_dir
     mv $backup_path $domain_dir
 }
@@ -521,7 +633,7 @@ set_permissions()
     local domain=$1
     local username=$2
 
-    local domain_dir=`eval $get_domain_dir`
+    local domain_dir=`eval $get_domain_dir_command`
     chown -R ${username}:${username} $domain_dir
 }
 
@@ -544,6 +656,7 @@ move_all_sites()
     fi
 
     for username in ${users[@]}; do
+        echo '=========='
         echo_time "Processing user '$username'"
         if [ `eval $check_user_command` -eq 1 ]; then
             echo "No user '$username'. Skipping."
@@ -612,6 +725,99 @@ gen_new_usename()
     echo $username
 }
 
+# Change owner of DNS-domain
+change_ns_owner()
+{
+    local domain=$1
+    local username=$2
+    local func_name=${FUNCNAME[0]}
+
+    local userid=`eval $get_id_by_username_command`
+    local answer=`eval $change_dnsdomain_owner_command`
+    check_result $func_name ${answer[@]}
+    local result=$?
+    case $result in
+        0 )
+            return 0
+        ;;
+        1 )
+            echo "Error in $func_name"
+            echo "$answer"
+            register_errors $domain $answer
+            return 1
+        ;;
+        2 )
+            echo "Adding 'Option InsecureDomain' to $ISPMGR_CONF"
+            echo 'Option InsecureDomain' >> $ISPMGR_CONF
+            eval $kill_ispmgr_command
+            answer=`eval $create_site_command`
+        ;;
+        * )
+            echo "Undefined result in $func_name "
+            echo -e "Answer:\n$answer"
+            finish NOTOK
+        ;;
+    esac
+}
+
+# Change owner of email-domain
+change_email_owner()
+{
+    local domain=$1
+    local username=$2
+    local func_name=${FUNCNAME[0]}
+
+    local userid=`eval $get_id_by_username_command`
+    local answer=`eval $change_emaildomain_owner_command`
+    check_result $func_name ${answer[@]}
+    local result=$?
+    case $result in
+        0 )
+            return 0
+        ;;
+        1 )
+            echo "Error in $func_name"
+            echo "$answer"
+            register_errors $domain $answer
+            return 1
+        ;;
+        2 )
+            echo "Adding 'Option InsecureDomain' to $ISPMGR_CONF"
+            echo 'Option InsecureDomain' >> $ISPMGR_CONF
+            eval $kill_ispmgr_command
+            answer=`eval $create_site_command`
+        ;;
+        * )
+            echo "Undefined result in $func_name "
+            echo -e "Answer:\n$answer"
+            finish NOTOK
+        ;;
+    esac
+}
+
+# Register errors
+register_errors()
+{
+    local domain=$1
+    shift
+    local error=$@
+
+    ERRORS["$domain"]="$error"
+}
+
+# Report errors 
+report_errors()
+{
+    local domain
+    if [ ${#ERRORS[@]} -gt 0 ]; then
+        echo_time "We had following errors:"
+        for domain in "${!ERRORS[@]}"; do
+            echo -e " - $domain -"
+            echo ${ERRORS["$domain"]}
+            echo ' -------'
+        done
+    fi
+}
 
 
 # Preparing everything
@@ -641,3 +847,6 @@ else
         move_all_sites
     fi
 fi
+
+# Report errors if any
+report_errors
