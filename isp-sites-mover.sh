@@ -6,6 +6,8 @@ usage_text=$(cat << EOF
 Usage: `basename $0` ( -u user -d domain ) | ( -a ) | ( -u user -a [ -x domain] ) 
 Script to move sites between ISPmanager users.
 
+    -h\tshow this help
+
 You can move one site:
     -u\tusername of new site owner
     -d\tdomainname to move
