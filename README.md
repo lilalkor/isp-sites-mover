@@ -3,7 +3,7 @@ Script to move sites between users in ISPmanager 4 and 5
 
 Usage:
 
-wget https://supportgitsrv.fv.ee/lihachev/isp-sites-mover/raw/master/isp-sites-mover.sh -O ~/isp-sites-mover.sh && chmod +x ~/isp-sites-mover.sh
+wget https://raw.githubusercontent.com/lilalkor/isp-sites-mover/master/isp-sites-mover.sh -O ~/isp-sites-mover.sh && chmod +x ~/isp-sites-mover.sh
 
 1. Move site 'domain.com' to user 'newuser'
 isp-sites-mover.sh -u newuser -d domain.com
